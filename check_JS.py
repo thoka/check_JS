@@ -12,7 +12,7 @@ import re
 from StringIO import StringIO
 
 DEBUG = False
-PDEBUG = not True
+PDEBUG = False
 
 class PyFilter(Filter):
 
@@ -113,7 +113,7 @@ class JSFilter(Filter):
                 elif ttype == Token.Punctuation and value == u'.':
                     # this is a hack, while [] and () is not handled correctly
                     mode = 1
-                elif ttype == Token.Keyword and value == u'catch':
+                elif ttype == Token.Keyword and value in [ u'catch', u'for' ]:
                     mode = 3
                     
             # 1: skip property access         
@@ -131,9 +131,12 @@ class JSFilter(Filter):
             elif mode == 2: 
                 if ttype == Token.Text:
                     pass
+                elif ttype == Token.Punctuation and value == u',':
+                    pass
                 elif ttype == Token.Name.Other:
                     self.js_locals.append( value )
                     if DEBUG: print "> local",value
+                else:
                     mode = 0
                     
             # 3: function parameter names, catch var 
