@@ -10,8 +10,65 @@ from pygments.filter import Filter
 import re
 
 DEBUG = False
+PDEBUG = not True
 
-class MyFilter(Filter):
+class PyFilter(Filter):
+
+    def __init__(self, filename = 'stdin', **options):
+        Filter.__init__(self, **options)
+        self.filename = filename
+
+    def filter(self, lexer, stream):
+        
+        s  = [i for i in stream]
+
+        mode = 0
+        
+        count = -1
+        line = 1
+        for ttype, value in s:
+            count += 1
+            if PDEBUG: print "%",mode,ttype,repr(value)
+            
+            if value == u'\n': line +=1
+                
+            if ttype == Token.Name and value == 'JS' and s[count+1][1] == u'(':
+                start = count+2
+                end = start
+                while not ( s[end][0] == Token.Punctuation and s[end][1] == u')'):
+                    end += 1
+                
+                js = u''.join( [ i[1] for i in s[start+1:end-1] ] )
+                
+                print "javascript (%s:%i):" % (self.filename,line)
+                
+                check_JS(js)
+                #print java_src
+                
+            
+        if False:
+            yield ttype,value
+
+
+def check_py(code,filename='stdin'):
+    """
+    tries to catch all JS(src) calls inside python code and run them through check_JS
+    """
+
+    lexer = pygments.lexers.PythonLexer()
+    lexer.encoding = 'utf8'
+    
+    filter = PyFilter(filename)
+    lexer.add_filter(filter)
+    
+    fmter = pygments.formatters.get_formatter_by_name('text')
+    fmter.encoding = 'utf8'
+    
+    outfile = sys.stdout
+    pygments.highlight(code, lexer, fmter, outfile)
+    
+
+class JSFilter(Filter):
 
     def __init__(self, **options):
         Filter.__init__(self, **options)
@@ -44,6 +101,11 @@ class MyFilter(Filter):
                     mode = 1
                 elif ttype == Token.Keyword.Declaration and value == u'function':
                     mode = 3
+                elif ttype == Token.Punctuation and value == u'.':
+                    # this is a hack, while [] and () is not handled correctly
+                    mode = 1
+                elif ttype == Token.Keyword and value == u'catch':
+                    mode = 3
                     
             # 1: skip property access         
             elif mode == 1: 
@@ -65,7 +127,7 @@ class MyFilter(Filter):
                     if DEBUG: print "> local",value
                     mode = 0
                     
-            # 3: function parameter names
+            # 3: function parameter names, catch var 
             elif mode == 3:
                 if ttype == Token.Name.Other:
                     self.js_locals.append( value )
@@ -91,7 +153,7 @@ def check_JS(code):
    
     lexer = pygments.lexers.web.JavascriptLexer()
     lexer.encoding = 'utf8'
-    filter = MyFilter()
+    filter = JSFilter()
     lexer.add_filter(filter)
     
     fmter = pygments.formatters.get_formatter_by_name('text')
@@ -108,58 +170,17 @@ def check_JS(code):
 
 def main(args=sys.argv):
    
+    fn = "test/tests.py"
+    code = codecs.open(fn,'r','utf8').read()
+    check_py(code,fn)
+
+    sys.exit()
+
     if len(args)>1:
         code = [ codecs.open(fn,'r','utf8').read() for fn in args[1:] ]
     else:    
-    
         code = []
         
-        code.append("""
-        Number.prototype.__init__ = function (value, radix) {
-            return null;
-        };
-        """)
-
-        code.append("""
-        switch (@{{v}}) {
-            case null:
-            case false:
-            case 0:
-            case '':
-                return false;
-        }
-        if (typeof @{{v}} == 'object') {
-            if (typeof @{{v}}.__nonzero__ == 'function'){
-                return @{{v}}.__nonzero__();
-            } else if (typeof @{{v}}.__len__ == 'function'){
-                return @{{v}}.__len__() > 0;
-            }
-        }
-        return true;
-        """)
-
-        code.append("""
-            var v = Number(@{{num}});
-            if (isNaN(v)) {
-                throw @{{ValueError}}("invalid literal for float(): " + num);
-            }
-            return v;
-        """)
-
-        code.append("""
-        _errorMapping = function(err) {
-            if (err instanceof(ReferenceError) || err instanceof(TypeError)) {
-                var message = '';
-                try {
-                    message = err.message;
-                } catch ( e) {
-                }
-                return AttributeError(message);
-            }
-            return err;
-        };
-        """)
-
     for c in code:
         check_JS(c)
             
