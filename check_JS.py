@@ -162,7 +162,7 @@ class JSFilter(Filter):
         for ttype, value in s:
             if ttype == Token.Name.Other and value.endswith('XXX'):
                 pass
-                # value = "@{{%s}}" % value[:-3]
+                value = "@{{%s}}" % value[:-3]
             yield ttype, value
 
 
