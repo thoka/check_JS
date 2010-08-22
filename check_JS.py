@@ -9,6 +9,8 @@ from pygments.filter import Filter
 
 import re
 
+from StringIO import StringIO
+
 DEBUG = False
 PDEBUG = not True
 
@@ -40,11 +42,18 @@ class PyFilter(Filter):
                 
                 js = u''.join( [ i[1] for i in s[start+1:end-1] ] )
                 
-                print "javascript (%s:%i):" % (self.filename,line)
                 
-                check_JS(js)
+                check = check_JS(js)
+                
+                if check.filter.untranslated:
+                    print "-"*70
+                    print "%s:%i" % (self.filename,line)
+                    print
+                    # print " not escaped:",check.filter.untranslated
+                    print check.out
+                    print
+                
                 #print java_src
-                
             
         if False:
             yield ttype,value
@@ -64,7 +73,7 @@ def check_py(code,filename='stdin'):
     fmter = pygments.formatters.get_formatter_by_name('text')
     fmter.encoding = 'utf8'
     
-    outfile = sys.stdout
+    outfile = sys.stdout    
     pygments.highlight(code, lexer, fmter, outfile)
     
 
@@ -135,54 +144,58 @@ class JSFilter(Filter):
                 elif ttype == Token.Punctuation and value == u')':
                     mode = 0
 
-            #TODO catch
+            #TODO for
             #TODO (eventually): variable scope (func pars only valid inside func etc)
+            
+            self.tokens = s
 
+
+        self.untranslated = []
+
+        for v in self.vars:
+            if not (v[0].endswith(u'XXX') or v[0].startswith(u'$')):
+                self.untranslated.append(v)
+        
+        for i in [j[1] for j in self.untranslated]:
+            s[i] = (Token.Error, s[i][1])
 
         for ttype, value in s:
             if ttype == Token.Name.Other and value.endswith('XXX'):
-                value = "@{{%s}}" % value[:-3]
+                pass
+                # value = "@{{%s}}" % value[:-3]
             yield ttype, value
 
 
 def addXXX(match):
     return match.group(0)[3:-2]+"XXX"
 
-def check_JS(code):
-    code = re.sub(r'@{{[A-Za-z_]+}}',addXXX,code)
-   
-    lexer = pygments.lexers.web.JavascriptLexer()
-    lexer.encoding = 'utf8'
-    filter = JSFilter()
-    lexer.add_filter(filter)
-    
-    fmter = pygments.formatters.get_formatter_by_name('text')
-    fmter.encoding = 'utf8'
-    
-    outfile = sys.stdout
-    pygments.highlight(code, lexer, fmter, outfile)
-    
-    print "used vars",filter.vars
-    print "js locals",filter.js_locals
-    print
-    print
-    
+class check_JS:
 
-def main(args=sys.argv):
-   
-    fn = "test/tests.py"
-    code = codecs.open(fn,'r','utf8').read()
-    check_py(code,fn)
-
-    sys.exit()
-
-    if len(args)>1:
-        code = [ codecs.open(fn,'r','utf8').read() for fn in args[1:] ]
-    else:    
-        code = []
+    def __init__(self,code):
         
-    for c in code:
-        check_JS(c)
+        self.code = re.sub(r'@{{[A-Za-z_]+}}',addXXX,code)
+       
+        lexer = pygments.lexers.web.JavascriptLexer()
+        lexer.encoding = 'utf8'
+
+        self.filter = JSFilter()
+        lexer.add_filter(self.filter)
+        
+        fmter = pygments.formatters.get_formatter_by_name('console')
+        fmter.encoding = 'utf8'
+        
+        self.out = StringIO()
+        pygments.highlight(self.code, lexer, fmter, self.out)
+        self.out = self.out.getvalue()
+        
+def main(args=sys.argv):
+
+    if len(args)==1:
+        args.append("test/tests.py")
+
+    for fn in args[1:]:
+        code = codecs.open(fn,'r','utf8').read()
+        check_py(code,fn)
             
     
 if __name__ == '__main__':

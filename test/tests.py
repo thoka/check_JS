@@ -77,3 +77,33 @@ $module['_handle_exception'] = function(err) {
 };
 """)
 
+JS("""function (args) {
+    var a;
+    if (args[0] !== null && args[1] !== null && args.length > 1) {
+        var res, r;
+        res = args[0];
+        for (i = 1; i < args.length; i++) {
+            if (typeof res['__and__'] == 'function') {
+                r = res;
+                res = res.__and__(args[i]);
+                if (res === NotImplementedXXX && typeof args[i]['__rand__'] == 'function') {
+                    res = args[i].__rand__(r);
+                }
+            } else if (typeof args[i]['__rand__'] == 'function') {
+                res = args[i].__rand__(res);
+            } else {
+                res = null;
+                break;
+            }
+            if (res === NotImplementedXXX) {
+                res = null;
+                break;
+            }
+        }
+        if (res !== null) {
+            return res;
+        }
+    }
+""")
+
+
