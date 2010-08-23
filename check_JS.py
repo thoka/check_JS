@@ -17,7 +17,7 @@ DEBUG = False
 PDEBUG = False
 
 WHITESPACE = [Token.Text]
-DO_NOT_REPORT = [u'ReferenceError',u'TypeError']
+DO_NOT_REPORT = u'ReferenceError,TypeError,pyjslib'.split(u',')
 
 class PyFilter(Filter):
 
@@ -118,6 +118,13 @@ class JSFilter(Filter):
         while count<len(self.tokens) and self.tokens[count][0] in skiptokens:
             count += 1
         return count
+
+    def expect(self,count,expected):
+        if self.ttype(count) not in expected:
+            logger.error(
+                'error, %s expected but %s found at %i',expected,self.token(count),count
+            )
+            self.mark_error(count)
     
     def ttype(self,count): return self.tokens[count][0]
     def value(self,count): return self.tokens[count][1]
@@ -127,23 +134,63 @@ class JSFilter(Filter):
     def mark_error(self,i): 
         self.tokens[i] = (Token.Error, self.value(i))
 
+    def parse_expression_list(self,count):
+        while True:
+            count = self.parse_expression(count)
+            count = self.skip(count)
+            if self.value(count) == u',':
+                count += 1
+                continue
+            if not self.value(count) == ')':
+                logger.error(
+                    'error, ")" expected but %s found at %i',self.value(count),count
+                )
+                self.mark_error(count)
+            return count
+
     @log
     def parse_expression(self,count):
-        count = self.skip(count)
-        if self.ttype(count) == Token.Name.Other and self.value(count) not in self.js_locals:
-            self.vars.append( (self.value(count), count) )
-        count = self.skip(count+1)
+        # basic idea: return on ',' ';' '}' ')' , if parents are matched
+        
+        end = count
+        level = 0
         while True:
-            if self.eof(count) or self.value(count) in  [u';',u'}']:
-                return count
-            if self.value(count) == u'.':
-                count = self.skip(count+1,WHITESPACE+[Token.Name.Other])
-                continue
-            if self.value(count) in [ u'[', u'(' ] :
-                count = self.parse_expression(count+1)
-                count = self.skip(count+1,WHITESPACE+[Token.Punctuation])
-                continue
-            return count
+            if level ==0 and self.value(end) in [u',',u';',u'}',u')']:
+                break
+            if self.value(end) == u'(':
+                level += 1
+            elif self.value(end) == u')':
+                level -= 1
+            end += 1
+        
+        self.parse(count,end)
+        return end
+
+#        dont do a classic parser ... not worth the effort
+#
+#        count = self.skip(count)
+#        if self.ttype(count) == Token.Name.Other and self.value(count) not in self.js_locals:
+#            self.vars.append( (self.value(count), count) )
+#        count = self.skip(count+1)
+#        while True:
+#            if self.eof(count) or self.value(count) in  [u';',u'}']:
+#                return count
+#            if self.value(count) == u'.':
+#                count = self.skip(count+1,WHITESPACE+[Token.Name.Other])
+#                continue
+#            if self.value(count) in [ u'['] :
+#                count = self.parse_expression(count+1)
+#                count = self.skip(count)
+#                self.expect(count,[Token.Punctuation])
+#                count += 1
+#                continue
+#            if self.value(count) in [u'(' ] :
+#                count = self.parse_expression_list(count+1)
+#                count = self.skip(count)
+#                self.expect(count,[Token.Punctuation])
+#                count += 1
+#                continue
+#            return count
 
     @log
     def parse_var(self,count):
@@ -151,7 +198,6 @@ class JSFilter(Filter):
         while True:
             count = self.skip(count)
             if not self.ttype(count) == Token.Name.Other:
-                print self.tokens
                 self.errors.append( count )
                 logger.error('Token.Name.Other expected, got %s instead', (self.token(count)) )
                 return count+1
@@ -177,22 +223,18 @@ class JSFilter(Filter):
 
             return count
         
-
-    def filter(self, lexer, stream):
-        
-        self.tokens  = [i for i in stream]
-
-        count =  0
-
+    @log
+    def parse(self,start,end):
 
         mode = 0
         name = []
 
-        while count<len(self.tokens):
+        count =  start
+        while count<end:
             
             ttype, value = self.tokens[count]
             
-            if DEBUG: print "!",mode,ttype,repr(value)
+            if DEBUG: print "! %3i" % count,mode,ttype,repr(value)
 
             # 0: wait for Name.Other
             if mode == 0: 
@@ -260,6 +302,14 @@ class JSFilter(Filter):
             #TODO for
             #TODO (eventually): variable scope (func pars only valid inside func etc)
             
+        return end
+
+    def filter(self, lexer, stream):
+        
+        self.tokens  = [i for i in stream]
+
+        self.parse(0,len(self.tokens))
+
         self.untranslated = []
 
         for v in self.vars:
