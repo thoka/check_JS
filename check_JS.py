@@ -11,8 +11,13 @@ import re
 
 from StringIO import StringIO
 
+import logging as logger
+
 DEBUG = False
 PDEBUG = False
+
+WHITESPACE = [Token.Text]
+DO_NOT_REPORT = [u'ReferenceError',u'TypeError']
 
 class PyFilter(Filter):
 
@@ -28,6 +33,7 @@ class PyFilter(Filter):
         
         count = -1
         line = 1
+        
         for ttype, value in s:
             count += 1
             if PDEBUG: print "%",mode,ttype,repr(value)
@@ -77,24 +83,115 @@ def check_py(code,filename='stdin'):
     pygments.highlight(code, lexer, fmter, outfile)
     
 
+indent = 0
+
+def show_pos(tokens,count):
+    res = u''.join( [ repr(i[1])[2:-1] for i in tokens[count-5:count] ] )
+    res += u'!'
+    res += u''.join( [ repr(i[1])[2:-1] for i in tokens[count:count+5] ] )
+    return res
+
+
+def log(fn):
+    if DEBUG:
+        def helper(*a,**kw):
+            global indent
+            print "  "*indent + "enter",fn.__name__,a,show_pos(a[0].tokens,a[1])
+            indent +=1
+            res = fn(*a,**kw)
+            indent -= 1
+            print "  "*indent + "leave",fn.__name__,res,show_pos(a[0].tokens,res)
+            return res
+        return helper
+    else:
+        return fn
+    
 class JSFilter(Filter):
 
     def __init__(self, **options):
         Filter.__init__(self, **options)
         self.js_locals = []
         self.vars = []
+        self.errors = []
+
+    def skip(self,count,skiptokens=WHITESPACE):
+        while count<len(self.tokens) and self.tokens[count][0] in skiptokens:
+            count += 1
+        return count
+    
+    def ttype(self,count): return self.tokens[count][0]
+    def value(self,count): return self.tokens[count][1]
+    def token(self,count): return self.tokens[count]
+    def eof(self,count): return count>=len(self.tokens)
+
+    def mark_error(self,i): 
+        self.tokens[i] = (Token.Error, self.value(i))
+
+    @log
+    def parse_expression(self,count):
+        count = self.skip(count)
+        if self.ttype(count) == Token.Name.Other and self.value(count) not in self.js_locals:
+            self.vars.append( (self.value(count), count) )
+        count = self.skip(count+1)
+        while True:
+            if self.eof(count) or self.value(count) in  [u';',u'}']:
+                return count
+            if self.value(count) == u'.':
+                count = self.skip(count+1,WHITESPACE+[Token.Name.Other])
+                continue
+            if self.value(count) in [ u'[', u'(' ] :
+                count = self.parse_expression(count+1)
+                count = self.skip(count+1,WHITESPACE+[Token.Punctuation])
+                continue
+            return count
+
+    @log
+    def parse_var(self,count):
+
+        while True:
+            count = self.skip(count)
+            if not self.ttype(count) == Token.Name.Other:
+                print self.tokens
+                self.errors.append( count )
+                logger.error('Token.Name.Other expected, got %s instead', (self.token(count)) )
+                return count+1
+            self.js_locals.append(self.value(count))
+            count = self.skip(count+1)
+            if self.eof(count): 
+                return count
+            if self.value(count) in  [u';',u'}']: 
+                return count+1
+            if self.value(count) == u'=':
+                count = self.parse_expression(count+1)
+                count = self.skip(count)
+            if self.eof(count): 
+                return count
+            if self.value(count) in  [u';',u'}']:
+                return count+1
+            if self.value(count) == u',':
+                count += 1
+                continue
+                
+            print "!!",count,self.ttype(count),self.value(count)
+            self.mark_error(count)
+
+            return count
+        
 
     def filter(self, lexer, stream):
         
-        s  = [i for i in stream]
+        self.tokens  = [i for i in stream]
+
+        count =  0
+
 
         mode = 0
-        
         name = []
-        
-        count = -1
-        for ttype, value in s:
-            count += 1
+
+        while count<len(self.tokens):
+            
+            ttype, value = self.tokens[count]
+            
             if DEBUG: print "!",mode,ttype,repr(value)
 
             # 0: wait for Name.Other
@@ -105,7 +202,8 @@ class JSFilter(Filter):
                         self.vars.append( (value,count) )
                     mode = 1
                 elif ttype == Token.Keyword.Declaration and value == u'var':
-                    mode = 2
+                    count = self.parse_var(count+1)
+                    mode = 0
                 elif ttype == Token.Name.Builtin:
                     mode = 1
                 elif ttype == Token.Keyword.Declaration and value == u'function':
@@ -113,8 +211,10 @@ class JSFilter(Filter):
                 elif ttype == Token.Punctuation and value == u'.':
                     # this is a hack, while [] and () is not handled correctly
                     mode = 1
-                elif ttype == Token.Keyword and value in [ u'catch', u'for' ]:
+                elif ttype == Token.Keyword and value == u'catch':
                     mode = 3
+                elif ttype == Token.Keyword and value == u'for':
+                    mode = 4
                     
             # 1: skip property access         
             elif mode == 1: 
@@ -146,23 +246,34 @@ class JSFilter(Filter):
                     if DEBUG: print "> local",value
                 elif ttype == Token.Punctuation and value == u')':
                     mode = 0
+            
+            # 4: for         
+            elif mode == 4: 
+                if ttype == Token.Name.Other:
+                    self.js_locals.append( value )
+                    if DEBUG: print "> local",value
+                elif value in [u')',u';']:
+                    mode = 0
+
+            count += 1
 
             #TODO for
             #TODO (eventually): variable scope (func pars only valid inside func etc)
             
-            self.tokens = s
-
-
         self.untranslated = []
 
         for v in self.vars:
-            if not (v[0].endswith(u'XXX') or v[0].startswith(u'$')):
+            vn = v[0]
+            if not (vn.endswith(u'XXX') or vn.startswith(u'$') or vn in DO_NOT_REPORT):
                 self.untranslated.append(v)
         
         for i in [j[1] for j in self.untranslated]:
-            s[i] = (Token.Error, s[i][1])
+            self.mark_error(i)
+            
+        for i in self.errors:
+            self.mark_error(i)
 
-        for ttype, value in s:
+        for ttype, value in self.tokens:
             if ttype == Token.Name.Other and value.endswith('XXX'):
                 pass
                 value = "@{{%s}}" % value[:-3]
@@ -190,6 +301,10 @@ class check_JS:
         self.out = StringIO()
         pygments.highlight(self.code, lexer, fmter, self.out)
         self.out = self.out.getvalue()
+        
+        if self.filter.errors:
+            print self.out
+        
         
 def main(args=sys.argv):
 
