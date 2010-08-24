@@ -1,8 +1,7 @@
 JS("""
 Number.prototype.__init__ = function (value, radix) {
     return null;
-};
-""")
+};""")
 
 JS("""
 switch (@{{v}}) {
@@ -34,8 +33,7 @@ typeof @{{v}} == 'object') {
         return @{{v}}.__len__() > 0;
     }
 }
-return true;
-""")
+return true;""")
 
 JS("""
     var v = Number(@{{num}});
@@ -77,7 +75,8 @@ $module['_handle_exception'] = function(err) {
 };
 """)
 
-JS("""function (args) {
+JS("""
+function (args) {
     var a;
     if (args[0] !== null && args[1] !== null && args.length > 1) {
         var res, r;
@@ -86,7 +85,7 @@ JS("""function (args) {
             if (typeof res['__and__'] == 'function') {
                 r = res;
                 res = res.__and__(args[i]);
-                if (res === NotImplementedXXX && typeof args[i]['__rand__'] == 'function') {
+                if (res === NotImplemented && typeof args[i]['__rand__'] == 'function') {
                     res = args[i].__rand__(r);
                 }
             } else if (typeof args[i]['__rand__'] == 'function') {
@@ -95,7 +94,7 @@ JS("""function (args) {
                 res = null;
                 break;
             }
-            if (res === NotImplementedXXX) {
+            if (res === NotImplemented) {
                 res = null;
                 break;
             }
@@ -105,5 +104,3 @@ JS("""function (args) {
         }
     }
 """)
-
-

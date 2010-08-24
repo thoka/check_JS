@@ -19,11 +19,15 @@ PDEBUG = False
 WHITESPACE = [Token.Text]
 DO_NOT_REPORT = u'ReferenceError,TypeError,pyjslib'.split(u',')
 
+FORMAT = 'text'
+REPLACE = False
+
 class PyFilter(Filter):
 
-    def __init__(self, filename = 'stdin', **options):
+    def __init__(self, filename = 'stdin', outpy = True, **options):
         Filter.__init__(self, **options)
         self.filename = filename
+        self.outpy = outpy
 
     def filter(self, lexer, stream):
         
@@ -31,38 +35,60 @@ class PyFilter(Filter):
 
         mode = 0
         
-        count = -1
+        count = 0
         line = 1
         
-        for ttype, value in s:
-            count += 1
+        while count < len(s):
+            ttype, value = s[count]
+
             if PDEBUG: print "%",mode,ttype,repr(value)
             
             if value == u'\n': line +=1
                 
             if ttype == Token.Name and value == 'JS' and s[count+1][1] == u'(':
                 start = count+2
+
+                # skip whitespace
+                while s[start][0] == Token.Text: start += 1
+                start+=1                 
+                # print "@@",repr(s[count:start+1])
+                # skip whitespace again, since pygments seems to remove it from the begining of a stream
+                while ( s[start][1] in [ u'',u'\n' ] ):  start += 1
+                
+                # scan for end of parameter string
                 end = start
                 while not ( s[end][0] == Token.Punctuation and s[end][1] == u')'):
                     end += 1
+                end -= 1
                 
-                js = u''.join( [ i[1] for i in s[start+1:end-1] ] )
-                
-                
+                # call js checker for joined text
+                js = u''.join( [ i[1] for i in s[start:end] ] )
                 check = check_JS(js)
                 
-                if check.filter.untranslated:
-                    print "-"*70
-                    print "%s:%i" % (self.filename,line)
-                    print
-                    # print " not escaped:",check.filter.untranslated
-                    print check.out
-                    print
+                if self.outpy:
+                    if REPLACE:
+                        #do conversion
+                        for i in [ j[1] for j in check.filter.untranslated ]:
+                            v = "@{{%s}}" % check.filter.value(i)
+                            check.filter.set_value(i,v)
+ 
+                    #output js tokens in stead of the python strings
+                    for t in s[count:start]: yield t
+                    for t in check.filter.tokens: yield t
+                else:    
+                    if check.filter.untranslated:
+                        print "-"*70
+                        print "%s:%i" % (self.filename,line)
+                        print
+                        print check.out
+                        print
                 
-                #print java_src
-            
-        if False:
-            yield ttype,value
+                value = check.out           
+                count = end            
+            else:
+                if self.outpy:
+                    yield ttype,value
+                count += 1
 
 
 def check_py(code,filename='stdin'):
@@ -76,7 +102,7 @@ def check_py(code,filename='stdin'):
     filter = PyFilter(filename)
     lexer.add_filter(filter)
     
-    fmter = pygments.formatters.get_formatter_by_name('text')
+    fmter = pygments.formatters.get_formatter_by_name(FORMAT)
     fmter.encoding = 'utf8'
     
     outfile = sys.stdout    
@@ -131,22 +157,11 @@ class JSFilter(Filter):
     def token(self,count): return self.tokens[count]
     def eof(self,count): return count>=len(self.tokens)
 
-    def mark_error(self,i): 
-        self.tokens[i] = (Token.Error, self.value(i))
+    def set_token(self,i,t): self.tokens[i] = ( t , self.value(i) )
+    def set_value(self,i,v): self.tokens[i] = ( self.token(i), v )
 
-    def parse_expression_list(self,count):
-        while True:
-            count = self.parse_expression(count)
-            count = self.skip(count)
-            if self.value(count) == u',':
-                count += 1
-                continue
-            if not self.value(count) == ')':
-                logger.error(
-                    'error, ")" expected but %s found at %i',self.value(count),count
-                )
-                self.mark_error(count)
-            return count
+    def mark_error(self,i): 
+        self.set_token(i,Token.Error)
 
     @log
     def parse_expression(self,count):
@@ -165,32 +180,6 @@ class JSFilter(Filter):
         
         self.parse(count,end)
         return end
-
-#        dont do a classic parser ... not worth the effort
-#
-#        count = self.skip(count)
-#        if self.ttype(count) == Token.Name.Other and self.value(count) not in self.js_locals:
-#            self.vars.append( (self.value(count), count) )
-#        count = self.skip(count+1)
-#        while True:
-#            if self.eof(count) or self.value(count) in  [u';',u'}']:
-#                return count
-#            if self.value(count) == u'.':
-#                count = self.skip(count+1,WHITESPACE+[Token.Name.Other])
-#                continue
-#            if self.value(count) in [ u'['] :
-#                count = self.parse_expression(count+1)
-#                count = self.skip(count)
-#                self.expect(count,[Token.Punctuation])
-#                count += 1
-#                continue
-#            if self.value(count) in [u'(' ] :
-#                count = self.parse_expression_list(count+1)
-#                count = self.skip(count)
-#                self.expect(count,[Token.Punctuation])
-#                count += 1
-#                continue
-#            return count
 
     @log
     def parse_var(self,count):
@@ -218,7 +207,7 @@ class JSFilter(Filter):
                 count += 1
                 continue
                 
-            print "!!",count,self.ttype(count),self.value(count)
+            logger.error("!! not expecting %s/%s at %i",self.ttype(count),self.value(count),count)
             self.mark_error(count)
 
             return count
@@ -306,7 +295,7 @@ class JSFilter(Filter):
 
     def filter(self, lexer, stream):
         
-        self.tokens  = [i for i in stream]
+        self.tokens  = [ i for i in stream ]
 
         self.parse(0,len(self.tokens))
 
@@ -317,18 +306,21 @@ class JSFilter(Filter):
             if not (vn.endswith(u'XXX') or vn.startswith(u'$') or vn in DO_NOT_REPORT):
                 self.untranslated.append(v)
         
+        for i in xrange(len(self.tokens)):
+            if self.ttype(i) == Token.Name.Other and self.value(i).endswith('XXX'):
+                self.set_value(i, "@{{%s}}" % self.value(i)[:-3] )
+
         for i in [j[1] for j in self.untranslated]:
             self.mark_error(i)
             
-        for i in self.errors:
+        for i in self.errors: 
             self.mark_error(i)
 
-        for ttype, value in self.tokens:
-            if ttype == Token.Name.Other and value.endswith('XXX'):
-                pass
-                value = "@{{%s}}" % value[:-3]
-            yield ttype, value
-
+        for t in self.tokens: 
+            yield t
+    
+            
+        
 
 def addXXX(match):
     return match.group(0)[3:-2]+"XXX"
@@ -336,22 +328,32 @@ def addXXX(match):
 class check_JS:
 
     def __init__(self,code):
-        
+
+        #print "check_JS",repr(code)
         self.code = re.sub(r'@{{[A-Za-z_]+}}',addXXX,code)
+
+        #workaround for pygments adding/removing "/n" to last token
+        add_nl = self.code.endswith(u'\n')
        
-        lexer = pygments.lexers.web.JavascriptLexer()
+        lexer = pygments.lexers.web.JavascriptLexer(ensurenl=False)
         lexer.encoding = 'utf8'
 
         self.filter = JSFilter()
         lexer.add_filter(self.filter)
         
-        fmter = pygments.formatters.get_formatter_by_name('console')
+        fmter = pygments.formatters.get_formatter_by_name(FORMAT)
         fmter.encoding = 'utf8'
         
         self.out = StringIO()
         pygments.highlight(self.code, lexer, fmter, self.out)
         self.out = self.out.getvalue()
-        
+
+        #workaround for pygments adding/removing "\n" to last token
+        if add_nl:
+            i = len(self.filter.tokens)-1
+            v = self.filter.value(i)+u'\n'
+            self.filter.set_value(i,v)
+
         if self.filter.errors:
             print self.out
         
