@@ -12,6 +12,8 @@ import re
 from StringIO import StringIO
 
 import logging as logger
+from optparse import OptionParser
+
 
 DEBUG = False
 PDEBUG = False
@@ -19,15 +21,12 @@ PDEBUG = False
 WHITESPACE = [Token.Text]
 DO_NOT_REPORT = u'ReferenceError,TypeError,pyjslib'.split(u',')
 
-FORMAT = 'text'
-REPLACE = False
-
 class PyFilter(Filter):
 
-    def __init__(self, filename = 'stdin', outpy = True, **options):
-        Filter.__init__(self, **options)
+    def __init__(self, options, filename = 'stdin' ):
+        Filter.__init__(self)
         self.filename = filename
-        self.outpy = outpy
+        self.options = options
 
     def filter(self, lexer, stream):
         
@@ -63,10 +62,10 @@ class PyFilter(Filter):
                 
                 # call js checker for joined text
                 js = u''.join( [ i[1] for i in s[start:end] ] )
-                check = check_JS(js)
+                check = check_JS(self.options,js)
                 
-                if self.outpy:
-                    if REPLACE:
+                if self.options.outpy:
+                    if self.options.replace:
                         #do conversion
                         for i in [ j[1] for j in check.filter.untranslated ]:
                             v = "@{{%s}}" % check.filter.value(i)
@@ -86,38 +85,37 @@ class PyFilter(Filter):
                 value = check.out           
                 count = end            
             else:
-                if self.outpy:
+                if self.options.outpy:
                     yield ttype,value
                 count += 1
 
 
-def check_py(code,filename='stdin'):
+def check_py(code,options, filename='stdin',outfile = sys.stdout):
     """
     tries to catch all JS(src) calls inside python code and run them through check_JS
     """
-
+    
     lexer = pygments.lexers.PythonLexer()
     lexer.encoding = 'utf8'
     
-    filter = PyFilter(filename)
+    filter = PyFilter(options,filename)
     lexer.add_filter(filter)
     
-    fmter = pygments.formatters.get_formatter_by_name(FORMAT)
+    fmter = pygments.formatters.get_formatter_by_name(options.format)
     fmter.encoding = 'utf8'
-    
-    outfile = sys.stdout    
+        
     pygments.highlight(code, lexer, fmter, outfile)
     
 
+#debug helper
 indent = 0
-
 def show_pos(tokens,count):
     res = u''.join( [ repr(i[1])[2:-1] for i in tokens[count-5:count] ] )
     res += u'!'
     res += u''.join( [ repr(i[1])[2:-1] for i in tokens[count:count+5] ] )
     return res
 
-
+#debug helper
 def log(fn):
     if DEBUG:
         def helper(*a,**kw):
@@ -134,8 +132,9 @@ def log(fn):
     
 class JSFilter(Filter):
 
-    def __init__(self, **options):
-        Filter.__init__(self, **options)
+    def __init__(self, options):
+        Filter.__init__(self)
+        self.options = options
         self.js_locals = []
         self.vars = []
         self.errors = []
@@ -318,16 +317,15 @@ class JSFilter(Filter):
 
         for t in self.tokens: 
             yield t
-    
-            
-        
+   
+
 
 def addXXX(match):
     return match.group(0)[3:-2]+"XXX"
 
 class check_JS:
 
-    def __init__(self,code):
+    def __init__(self,options,code):
 
         #print "check_JS",repr(code)
         self.code = re.sub(r'@{{[A-Za-z_]+}}',addXXX,code)
@@ -338,10 +336,10 @@ class check_JS:
         lexer = pygments.lexers.web.JavascriptLexer(ensurenl=False)
         lexer.encoding = 'utf8'
 
-        self.filter = JSFilter()
+        self.filter = JSFilter(options)
         lexer.add_filter(self.filter)
         
-        fmter = pygments.formatters.get_formatter_by_name(FORMAT)
+        fmter = pygments.formatters.get_formatter_by_name(options.format)
         fmter.encoding = 'utf8'
         
         self.out = StringIO()
@@ -358,14 +356,34 @@ class check_JS:
             print self.out
         
         
-def main(args=sys.argv):
+def main():
 
-    if len(args)==1:
-        args.append("test/tests.py")
-
-    for fn in args[1:]:
+    parser = OptionParser(usage="%prog [options] filename...")
+    parser.add_option("--check", dest="action" , action ="store_const", const="check", default="check" 
+                      ,help="show not escapend js code (default behaviour)")
+    parser.add_option("--convert", dest="action" , action ="store_const", const="convert" 
+                      ,help="output py src with converted JS fragments")
+    #parser.add_option("-r", "--recurse", dest="recurse" , action ="store_true", default = False ,help="recurse directories")
+ 
+    options, args  = parser.parse_args()
+ 
+    if options.action == "check":
+        options.format = "terminal"
+        options.replace = False
+        options.outpy = False
+    elif options.action == "convert":
+        options.replace = True
+        options.outpy = True
+        options.format = 'text'
+        
+        
+    if len(args)<1:
+        parser.print_help()
+ 
+    for fn in args:
+        
         code = codecs.open(fn,'r','utf8').read()
-        check_py(code,fn)
+        new_code = check_py(code,options,fn)
             
     
 if __name__ == '__main__':
