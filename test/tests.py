@@ -38,7 +38,7 @@ return true;""")
 JS("""
     var v = Number(@{{num}});
     if (isNaN(v)) {
-        throw @{{ValueError}}("invalid literal for float(): " + num);
+        throw @{{ValueError}}("invalid literal for float(): " + @{{!num}});
     }
     return v;
 """)
