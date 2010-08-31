@@ -13,7 +13,10 @@ from StringIO import StringIO
 
 import logging as logger
 from optparse import OptionParser
+import os.path
+from cStringIO import StringIO
 
+from subprocess import call
 
 DEBUG = False
 PDEBUG = False
@@ -27,7 +30,8 @@ class PyFilter(Filter):
         Filter.__init__(self)
         self.filename = filename
         self.options = options
-
+        self.conversions = 0 # counts converted vars
+        
     def filter(self, lexer, stream):
         
         s  = [i for i in stream]
@@ -37,6 +41,8 @@ class PyFilter(Filter):
         count = 0
         line = 1
         
+        convert_only_one = self.options.convert_only_one
+        
         while count < len(s):
             ttype, value = s[count]
 
@@ -44,7 +50,11 @@ class PyFilter(Filter):
             
             if value == u'\n': line +=1
                 
-            if ttype == Token.Name and value == 'JS' and s[count+1][1] == u'(':
+            if not (convert_only_one and self.conversions>0) \
+               and ttype == Token.Name and value == 'JS' and s[count+1][1] == u'(':
+    
+                startline = line
+
                 start = count+2
 
                 # skip whitespace
@@ -70,6 +80,7 @@ class PyFilter(Filter):
                         for i in [ j[1] for j in check.filter.untranslated ]:
                             v = "@{{%s}}" % check.filter.value(i)
                             check.filter.set_value(i,v)
+                            self.conversions += 1
  
                     #output js tokens in stead of the python strings
                     for t in s[count:start]: yield t
@@ -90,21 +101,27 @@ class PyFilter(Filter):
                 count += 1
 
 
-def check_py(code,options, filename='stdin',outfile = sys.stdout):
-    """
-    tries to catch all JS(src) calls inside python code and run them through check_JS
-    """
+class check_py:
     
-    lexer = pygments.lexers.PythonLexer()
-    lexer.encoding = 'utf8'
-    
-    filter = PyFilter(options,filename)
-    lexer.add_filter(filter)
-    
-    fmter = pygments.formatters.get_formatter_by_name(options.format)
-    fmter.encoding = 'utf8'
+    def __init__(self,code,options, filename='stdin',outfile = sys.stdout):
+        """
+        tries to catch all JS(src) calls inside python code and run them through check_JS
+
         
-    pygments.highlight(code, lexer, fmter, outfile)
+        """
+        
+        
+        lexer = pygments.lexers.PythonLexer()
+        lexer.encoding = 'utf8'
+        
+        filter = PyFilter(options,filename)
+        lexer.add_filter(filter)
+        
+        fmter = pygments.formatters.get_formatter_by_name(options.format)
+        fmter.encoding = 'utf8'
+            
+        pygments.highlight(code, lexer, fmter, outfile)
+        self.conversions = filter.conversions
     
 
 #debug helper
@@ -169,11 +186,11 @@ class JSFilter(Filter):
         end = count
         level = 0
         while True:
-            if level ==0 and self.value(end) in [u',',u';',u'}',u')']:
+            if level ==0 and self.value(end) in [u',',u';',u'}',u')',u']']:
                 break
-            if self.value(end) == u'(':
+            if self.value(end) in [ u'(', u'[' ]:
                 level += 1
-            elif self.value(end) == u')':
+            elif self.value(end) in [ u')', u']' ]:
                 level -= 1
             end += 1
         
@@ -239,7 +256,6 @@ class JSFilter(Filter):
                 elif ttype == Token.Keyword.Declaration and value == u'function':
                     mode = 3
                 elif ttype == Token.Punctuation and value == u'.':
-                    # this is a hack, while [] and () is not handled correctly
                     mode = 1
                 elif ttype == Token.Keyword and value == u'catch':
                     mode = 3
@@ -307,7 +323,10 @@ class JSFilter(Filter):
         
         for i in xrange(len(self.tokens)):
             if self.ttype(i) == Token.Name.Other and self.value(i).endswith('XXX'):
-                self.set_value(i, "@{{%s}}" % self.value(i)[:-3] )
+                vname = self.value(i)[:-3]
+                if vname.endswith('XXX'):
+                    vname = '!'+vname[:-3]
+                self.set_value(i, "@{{%s}}" % vname )
 
         for i in [j[1] for j in self.untranslated]:
             self.mark_error(i)
@@ -321,14 +340,18 @@ class JSFilter(Filter):
 
 
 def addXXX(match):
-    return match.group(0)[3:-2]+"XXX"
+    vname = match.group(1)
+    if vname.startswith("!"):
+        return vname[1:] + "XXXXXX" 
+    else:
+        return vname+"XXX"
 
 class check_JS:
 
     def __init__(self,options,code):
 
         #print "check_JS",repr(code)
-        self.code = re.sub(r'@{{[A-Za-z_]+}}',addXXX,code)
+        self.code = re.sub(r'@{{(!?[A-Za-z_]+)}}',addXXX,code)
 
         #workaround for pygments adding/removing "/n" to last token
         add_nl = self.code.endswith(u'\n')
@@ -355,6 +378,7 @@ class check_JS:
         if self.filter.errors:
             print self.out
         
+                            
         
 def main():
 
@@ -363,9 +387,22 @@ def main():
                       ,help="show not escapend js code (default behaviour)")
     parser.add_option("--convert", dest="action" , action ="store_const", const="convert" 
                       ,help="output py src with converted JS fragments")
+    parser.add_option("-1","--one", dest="convert_only_one" , action ="store_true", default=False 
+                      ,help="stop after first convertet JS(...) fragment")
+    parser.add_option("-o","--overwrite", dest="overwrite" , action ="store_true", default=False 
+                      ,help="overwrite input files, implies --convert")
+    parser.add_option("-a","--autocommit", dest="autocommit" , action ="store_true", default=False 
+                      ,help="auto commit changes, implies --convert --overwrite")
+
     #parser.add_option("-r", "--recurse", dest="recurse" , action ="store_true", default = False ,help="recurse directories")
  
     options, args  = parser.parse_args()
+
+    if options.autocommit:
+        options.overwrite = True
+
+    if options.overwrite:
+        options.action = "convert"
  
     if options.action == "check":
         options.format = "terminal"
@@ -376,16 +413,60 @@ def main():
         options.outpy = True
         options.format = 'text'
         
+    
         
     if len(args)<1:
         parser.print_help()
- 
+
+    allfiles = set()
+    
     for fn in args:
         
-        code = codecs.open(fn,'r','utf8').read()
-        new_code = check_py(code,options,fn)
-            
+        if os.path.isdir(fn):
+            for dirname, subdirs, files in os.walk(fn):
+                allfiles.update([ os.path.join(fn,f) for f in files if f.endswith('.py') ])
+        else:
+            allfiles.add(fn)
+       
+    allfiles = [i for i in allfiles]
+    allfiles.sort()
     
+    outfile = sys.stdout
+        
+    for fn in allfiles:
+
+        while True:
+            if options.overwrite:
+                outfile = StringIO()
+              
+            code = codecs.open(fn,'r','utf8').read()
+            check = check_py(code,options,fn,outfile=outfile)
+
+            if check.conversions>0:
+                if options.overwrite:
+                    outfile.seek(0)
+                    f = codecs.open(fn,'w','utf8')
+                    f.write(outfile.read())
+                    f.close()
+            
+                if options.convert_only_one and not options.autocommit:
+                    sys.exit()
+
+                if options.autocommit:
+                    d = os.path.abspath(os.path.dirname(fn))
+                    print "commit",d,fn
+                    call([ 'git','add', os.path.basename(fn) ], cwd = d )
+                    call([ 'git','commit','-m','check_JS conversion' ], cwd = d )
+
+            if not options.autocommit:
+                break
+            if check.conversions==0:
+                break
+
+
+def shell(cmd):
+    print 'SHELL:',cmd
+
 if __name__ == '__main__':
     sys.exit(main())
 
