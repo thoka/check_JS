@@ -22,7 +22,7 @@ DEBUG = False
 PDEBUG = False
 
 WHITESPACE = [Token.Text]
-DO_NOT_REPORT = u'ReferenceError,TypeError,pyjslib,arguments'.split(u',')
+DO_NOT_REPORT = u'ReferenceError,TypeError,pyjslib,arguments,attrib_remap'.split(u',')
 
 class PyFilter(Filter):
 
@@ -50,13 +50,8 @@ class PyFilter(Filter):
             
             if value == u'\n': 
                 line +=1
-                count +=1
-                continue
-            
-            if ttype == Token.Literal.String.Doc:
+            elif ttype == Token.Literal.String.Doc:
                 line += value.count(u'\n')
-                count += 1
-                continue
                 
             if not (convert_only_one and self.conversions>0) \
                and ttype == Token.Name and value == 'JS' and s[count+1][1] == u'(':
