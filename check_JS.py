@@ -22,7 +22,7 @@ DEBUG = False
 PDEBUG = False
 
 WHITESPACE = [Token.Text]
-DO_NOT_REPORT = u'ReferenceError,TypeError,pyjslib'.split(u',')
+DO_NOT_REPORT = u'ReferenceError,TypeError,pyjslib,arguments'.split(u',')
 
 class PyFilter(Filter):
 
@@ -48,7 +48,15 @@ class PyFilter(Filter):
 
             if PDEBUG: print "%",mode,ttype,repr(value)
             
-            if value == u'\n': line +=1
+            if value == u'\n': 
+                line +=1
+                count +=1
+                continue
+            
+            if ttype == Token.Literal.String.Doc:
+                line += value.count(u'\n')
+                count += 1
+                continue
                 
             if not (convert_only_one and self.conversions>0) \
                and ttype == Token.Name and value == 'JS' and s[count+1][1] == u'(':
@@ -69,6 +77,11 @@ class PyFilter(Filter):
                 while not ( s[end][0] == Token.Punctuation and s[end][1] == u')'):
                     end += 1
                 end -= 1
+
+                # calc line number
+                for i in xrange(count,end+1):
+                    if s[i][1] == u'\n':
+                        line += 1    
                 
                 # call js checker for joined text
                 js = u''.join( [ i[1] for i in s[start:end] ] )
@@ -88,7 +101,7 @@ class PyFilter(Filter):
                 else:    
                     if check.filter.untranslated:
                         print "-"*70
-                        print "%s:%i" % (self.filename,line)
+                        print "%s:%i" % (self.filename,startline)
                         print
                         print check.out
                         print
@@ -217,7 +230,7 @@ class JSFilter(Filter):
                 count = self.skip(count)
             if self.eof(count): 
                 return count
-            if self.value(count) in  [u';',u'}']:
+            if self.value(count) in  [u';',u'}',u')']:
                 return count+1
             if self.value(count) == u',':
                 count += 1
