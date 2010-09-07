@@ -94,9 +94,10 @@ class PyFilter(Filter):
                     for t in s[count:start]: yield t
                     for t in check.filter.tokens: yield t
                 else:    
-                    if check.filter.untranslated:
+                    if check.filter.untranslated or check.filter.br_count != 0:
                         print "-"*70
                         print "%s:%i" % (self.filename,startline)
+                        print "braces:",check.filter.br_count
                         print
                         print check.out
                         print
@@ -163,6 +164,8 @@ class JSFilter(Filter):
         self.js_locals = []
         self.vars = []
         self.errors = []
+        self.br_count = 0  # count { braces
+        
 
     def skip(self,count,skiptokens=WHITESPACE):
         while count<len(self.tokens) and self.tokens[count][0] in skiptokens:
@@ -194,11 +197,11 @@ class JSFilter(Filter):
         end = count
         level = 0
         while True:
-            if level ==0 and self.value(end) in [u',',u';',u'}',u')',u']']:
+            if self.eof(end) or ( level ==0 and self.value(end) ) in [u',',u';',u'}',u')',u']']:
                 break
-            if self.value(end) in [ u'(', u'[' ]:
+            if self.value(end) in [ u'(', u'[',u'{' ]:
                 level += 1
-            elif self.value(end) in [ u')', u']' ]:
+            elif self.value(end) in [ u')', u']',u'}' ]:
                 level -= 1
             end += 1
         
@@ -248,6 +251,9 @@ class JSFilter(Filter):
             ttype, value = self.tokens[count]
             
             if DEBUG: print "! %3i" % count,mode,ttype,repr(value)
+
+            if value == u'{' : self.br_count += 1
+            elif value == u'}' : self.br_count -= 1
 
             # 0: wait for Name.Other
             if mode == 0: 
