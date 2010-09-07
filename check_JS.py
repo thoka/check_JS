@@ -22,7 +22,7 @@ DEBUG = False
 PDEBUG = False
 
 WHITESPACE = [Token.Text]
-DO_NOT_REPORT = u'ReferenceError,TypeError,pyjslib,arguments,attrib_remap'.split(u',')
+DO_NOT_REPORT = u'ReferenceError,TypeError,pyjslib,arguments,attrib_remap,DOMParser,ActiveXObject,alert'.split(u',')
 
 class PyFilter(Filter):
 
@@ -96,7 +96,7 @@ class PyFilter(Filter):
                 else:    
                     if check.filter.untranslated or check.filter.br_count != 0:
                         print "-"*70
-                        print "%s:%i" % (self.filename,startline)
+                        print "%s +%i" % (self.filename,startline)
                         print "braces:",check.filter.br_count
                         print
                         print check.out
@@ -118,8 +118,7 @@ class check_py:
 
         
         """
-        
-        
+                
         lexer = pygments.lexers.PythonLexer()
         lexer.encoding = 'utf8'
         
@@ -365,7 +364,7 @@ class check_JS:
     def __init__(self,options,code):
 
         #print "check_JS",repr(code)
-        self.code = re.sub(r'@{{(!?[A-Za-z_]+)}}',addXXX,code)
+        self.code = re.sub(r'@{{(!?[A-Za-z_][A-Za-z_0-9]*)}}',addXXX,code)
 
         #workaround for pygments adding/removing "/n" to last token
         add_nl = self.code.endswith(u'\n')
@@ -438,7 +437,7 @@ def main():
         
         if os.path.isdir(fn):
             for dirname, subdirs, files in os.walk(fn):
-                allfiles.update([ os.path.join(fn,f) for f in files if f.endswith('.py') ])
+                allfiles.update([ os.path.join(dirname,f) for f in files if f.endswith('.py') ])
         else:
             allfiles.add(fn)
        
@@ -452,7 +451,8 @@ def main():
         while True:
             if options.overwrite:
                 outfile = StringIO()
-              
+
+            print "----",fn              
             code = codecs.open(fn,'r','utf8').read()
             check = check_py(code,options,fn,outfile=outfile)
 
