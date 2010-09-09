@@ -9,12 +9,11 @@ from pygments.filter import Filter
 
 import re
 
-from StringIO import StringIO
+from cStringIO import StringIO
 
 import logging as logger
 from optparse import OptionParser
 import os.path
-from cStringIO import StringIO
 
 from subprocess import call
 from time import sleep
@@ -26,10 +25,11 @@ WHITESPACE = [Token.Text]
 DO_NOT_REPORT = [ i.strip() for i in u"""
     ReferenceError,TypeError,
     pyjslib,arguments,attrib_remap,
+    pyjs_load_script,pyjs_eval,pyjs_type,pysm_print_fn,pyv8_print_fn,pyv8_open,
     DOMParser,ActiveXObject,XMLHttpRequest,
     alert,unescape,setTimeout,
-    array,number,object,string,math,
-    __iter__""".split(u',') ]
+    array,number,object,string,math,console,navigator,
+    __iter__,__location""".split(u',') ]
     #TODO: not shure about math 
 
 
@@ -174,6 +174,14 @@ class JSFilter(Filter):
         self.errors = []
         self.br_count = 0  # count { braces
         
+    def addXXX(self,match):
+        vname = match.group(1)
+        if vname.startswith("!"):
+            # dont do that, it prevents reporting some errors 
+            # self.js_locals.append(vname[1:])
+            return vname[1:] + "XXXXXX" 
+        else:
+            return vname+"XXX"
 
     def skip(self,count,skiptokens=WHITESPACE):
         while count<len(self.tokens) and self.tokens[count][0] in skiptokens:
@@ -361,22 +369,11 @@ class JSFilter(Filter):
    
 
 
-def addXXX(match):
-    vname = match.group(1)
-    if vname.startswith("!"):
-        return vname[1:] + "XXXXXX" 
-    else:
-        return vname+"XXX"
 
 class check_JS:
 
     def __init__(self,options,code):
 
-        #print "check_JS",repr(code)
-        self.code = re.sub(r'@{{(!?[A-Za-z_][A-Za-z_0-9]*)}}',addXXX,code)
-
-        #workaround for pygments adding/removing "/n" to last token
-        add_nl = self.code.endswith(u'\n')
        
         lexer = pygments.lexers.web.JavascriptLexer(ensurenl=False)
         lexer.encoding = 'utf8'
@@ -386,6 +383,12 @@ class check_JS:
         
         fmter = pygments.formatters.get_formatter_by_name(options.format)
         fmter.encoding = 'utf8'
+
+        #print "check_JS",repr(code)
+        self.code = re.sub(r'@{{(!?[A-Za-z_][A-Za-z_0-9]*)}}',self.filter.addXXX,code)
+
+        #workaround for pygments adding/removing "/n" to last token
+        add_nl = self.code.endswith(u'\n')
         
         self.out = StringIO()
         pygments.highlight(self.code, lexer, fmter, self.out)
@@ -400,8 +403,7 @@ class check_JS:
         if self.filter.errors:
             print self.out
         
-                            
-        
+                                            
 def main():
 
     parser = OptionParser(usage="%prog [options] filename...")
@@ -468,9 +470,10 @@ def main():
             if check.conversions>0:
                 if options.overwrite:
                     outfile.seek(0)
-                    f = codecs.open(fn,'w','utf8')
+                    f = open(fn+'.tmp','wb')
                     f.write(outfile.read())
                     f.close()
+                    os.rename(fn+'.tmp',fn)
             
                 if options.convert_only_one and not options.autocommit:
                     sys.exit()
